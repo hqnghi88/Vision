@@ -1,0 +1,30 @@
+# Gradle files
+.gradle/
+build/
+
+# Android Studio files
+*.iml
+.idea/
+local.properties
+.externalNativeBuild/
+.cxx/
+captures/
+
+# Package Files
+*.test
+*.apk
+*.aar
+*.ap_
+*.dex
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Generated files
+bin/
+gen/
+out/
+
+# Log files
+*.log
