@@ -26,13 +26,7 @@ class ObjectDetectorHelper(
     fun setupObjectDetector() {
         val baseOptionsBuilder = BaseOptions.builder()
             .setModelAssetPath("efficientdet_lite0.tflite")
-        
-        // Try GPU first, will fall back if it fails
-        try {
-            baseOptionsBuilder.setDelegate(Delegate.GPU)
-        } catch (e: Exception) {
-            baseOptionsBuilder.setDelegate(Delegate.CPU)
-        }
+            .setDelegate(Delegate.CPU)
 
         val optionsBuilder = ObjectDetector.ObjectDetectorOptions.builder()
             .setBaseOptions(baseOptionsBuilder.build())
@@ -45,17 +39,12 @@ class ObjectDetectorHelper(
         try {
             objectDetector = ObjectDetector.createFromOptions(context, optionsBuilder.build())
         } catch (e: Exception) {
-            // Final fallback to CPU if GPU failed during creation
-            try {
-                baseOptionsBuilder.setDelegate(Delegate.CPU)
-                objectDetector = ObjectDetector.createFromOptions(context, optionsBuilder.build())
-            } catch (e2: Exception) {
-                listener.onError("Detector failed to initialize: ${e2.message}")
-            }
+            listener.onError("Detector failed to initialize: ${e.message}")
         }
     }
 
     fun detectLiveStream(bitmap: Bitmap, frameTime: Long) {
+        android.util.Log.d("Vision", "Detecting frame at $frameTime")
         val mpImage = BitmapImageBuilder(bitmap).build()
         objectDetector?.detectAsync(mpImage, frameTime)
     }

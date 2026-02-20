@@ -36,6 +36,9 @@ android {
     buildFeatures {
         compose = true
     }
+    androidResources {
+        noCompress += "tflite"
+    }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.4"
     }

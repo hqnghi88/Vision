@@ -186,8 +186,13 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                     .background(Color.Black.copy(alpha = 0.3f))
                     .padding(top = 40.dp, start = 16.dp, bottom = 16.dp)
             ) {
+                val statusText = when {
+                    results == null -> "Initializing AI..."
+                    results.detections().isEmpty() -> "AI Active: No objects found"
+                    else -> "Detected:"
+                }
                 Text(
-                    text = if (results == null || results.detections().isEmpty()) "Scanning..." else "Detected:",
+                    text = statusText,
                     color = Color.Yellow,
                     style = MaterialTheme.typography.titleLarge
                 )
