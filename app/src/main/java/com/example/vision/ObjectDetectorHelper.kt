@@ -12,8 +12,8 @@ import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorResult
 
 class ObjectDetectorHelper(
     val context: Context,
-    var threshold: Float = 0.5f,
-    var maxResults: Int = 3,
+    var threshold: Float = 0.3f,
+    var maxResults: Int = 5,
     val listener: DetectorListener
 ) {
 
@@ -66,6 +66,7 @@ class ObjectDetectorHelper(
     ) {
         val finishTimeMs = SystemClock.uptimeMillis()
         val inferenceTime = finishTimeMs - result.timestampMs()
+        // Always notify the listener to update the UI state
         listener.onResults(result, inferenceTime)
     }
 

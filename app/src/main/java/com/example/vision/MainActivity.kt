@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -130,7 +131,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
 
                                 objectDetectorHelper?.detectLiveStream(
                                     scaledBitmap,
-                                    System.currentTimeMillis()
+                                    SystemClock.uptimeMillis()
                                 )
                                 imageProxy.close()
                             }
