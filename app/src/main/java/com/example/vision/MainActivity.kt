@@ -110,20 +110,15 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
 
                     val imageAnalyzer = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                         .setTargetRotation(view.display.rotation)
                         .build()
                         .also {
                             it.setAnalyzer(cameraExecutor) { imageProxy ->
-                                val bitmap = Bitmap.createBitmap(
-                                    imageProxy.width,
-                                    imageProxy.height,
-                                    Bitmap.Config.ARGB_8888
-                                )
-                                bitmap.copyPixelsFromBuffer(imageProxy.planes[0].buffer)
+                                // Convert ImageProxy to Bitmap
+                                val bitmap = imageProxy.toBitmap()
                                 
-                                // Rotate bitmap if necessary based on imageProxy.imageInfo.rotationDegrees
-                                val matrix = android.graphics.Matrix().apply {
+                                // Rotate bitmap to match device orientation
+                                val matrix = Matrix().apply {
                                     postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
                                 }
                                 val rotatedBitmap = Bitmap.createBitmap(
