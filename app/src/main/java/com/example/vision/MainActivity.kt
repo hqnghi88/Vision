@@ -115,10 +115,8 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                         .build()
                         .also {
                             it.setAnalyzer(cameraExecutor) { imageProxy ->
-                                // Using the built-in toBitmap()
                                 val bitmap = imageProxy.toBitmap()
                                 
-                                // Rotate bitmap to match device orientation
                                 val matrix = Matrix().apply {
                                     postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
                                 }
@@ -126,11 +124,8 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                                     bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
                                 )
 
-                                // Scaling down for the model's preferred input size (around 320x320)
-                                val scaledBitmap = Bitmap.createScaledBitmap(rotatedBitmap, 320, 320, true)
-
                                 objectDetectorHelper?.detectLiveStream(
-                                    scaledBitmap,
+                                    rotatedBitmap,
                                     SystemClock.uptimeMillis()
                                 )
                                 imageProxy.close()
