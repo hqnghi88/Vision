@@ -145,12 +145,43 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     it.detections().forEach { detection ->
                         val boundingBox = detection.boundingBox()
-                        // Scaling logic would go here to map normalized coordinates to view coordinates
+                        val categories = detection.categories()
+                        val text = categories.firstOrNull()?.categoryName() ?: "Unknown"
+                        val confidence = categories.firstOrNull()?.score() ?: 0f
+
+                        // Scale coordinates
+                        val left = boundingBox.left * size.width / 440f // Based on model input size
+                        val top = boundingBox.top * size.height / 440f
+                        val right = boundingBox.right * size.width / 440f
+                        val bottom = boundingBox.bottom * size.height / 440f
+
                         drawRect(
-                            color = Color.Red,
-                            topLeft = androidx.compose.ui.geometry.Offset(boundingBox.left, boundingBox.top),
-                            size = androidx.compose.ui.geometry.Size(boundingBox.width(), boundingBox.height()),
-                            style = Stroke(width = 2.dp.toPx())
+                            color = Color.Green,
+                            topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                            size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
+                            style = Stroke(width = 4.dp.toPx())
+                        )
+                        
+                        // We can't easily draw text in Compose Canvas without a native paint, 
+                        // but we can use this for the box.
+                    }
+                }
+            }
+            
+            // Text descriptions as a list overlay
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                results?.detections()?.forEach { detection ->
+                    val category = detection.categories().firstOrNull()
+                    if (category != null) {
+                        Text(
+                            text = "${category.categoryName()}: ${(category.score() * 100).toInt()}%",
+                            color = Color.White,
+                            style = MaterialTheme.typography.headlineSmall,
+                            modifier = Modifier.padding(bottom = 4.dp)
                         )
                     }
                 }
