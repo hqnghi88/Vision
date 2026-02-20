@@ -110,12 +110,11 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
 
                     val imageAnalyzer = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .setTargetResolution(android.util.Size(640, 480))
                         .setTargetRotation(view.display.rotation)
                         .build()
                         .also {
                             it.setAnalyzer(cameraExecutor) { imageProxy ->
-                                // Convert ImageProxy to Bitmap
+                                // Using the built-in toBitmap()
                                 val bitmap = imageProxy.toBitmap()
                                 
                                 // Rotate bitmap to match device orientation
@@ -126,8 +125,11 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                                     bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
                                 )
 
+                                // Scaling down for the model's preferred input size (around 320x320)
+                                val scaledBitmap = Bitmap.createScaledBitmap(rotatedBitmap, 320, 320, true)
+
                                 objectDetectorHelper?.detectLiveStream(
-                                    rotatedBitmap,
+                                    scaledBitmap,
                                     System.currentTimeMillis()
                                 )
                                 imageProxy.close()

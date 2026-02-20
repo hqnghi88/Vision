@@ -26,7 +26,13 @@ class ObjectDetectorHelper(
     fun setupObjectDetector() {
         val baseOptionsBuilder = BaseOptions.builder()
             .setModelAssetPath("efficientdet_lite0.tflite")
-            .setDelegate(Delegate.GPU)
+        
+        // Try GPU first, will fall back if it fails
+        try {
+            baseOptionsBuilder.setDelegate(Delegate.GPU)
+        } catch (e: Exception) {
+            baseOptionsBuilder.setDelegate(Delegate.CPU)
+        }
 
         val optionsBuilder = ObjectDetector.ObjectDetectorOptions.builder()
             .setBaseOptions(baseOptionsBuilder.build())
@@ -38,8 +44,14 @@ class ObjectDetectorHelper(
 
         try {
             objectDetector = ObjectDetector.createFromOptions(context, optionsBuilder.build())
-        } catch (e: IllegalStateException) {
-            listener.onError("Object detector failed to initialize. See error logs for details")
+        } catch (e: Exception) {
+            // Final fallback to CPU if GPU failed during creation
+            try {
+                baseOptionsBuilder.setDelegate(Delegate.CPU)
+                objectDetector = ObjectDetector.createFromOptions(context, optionsBuilder.build())
+            } catch (e2: Exception) {
+                listener.onError("Detector failed to initialize: ${e2.message}")
+            }
         }
     }
 
