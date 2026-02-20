@@ -16,6 +16,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -32,7 +34,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
 
     private lateinit var cameraExecutor: ExecutorService
     private var objectDetectorHelper: ObjectDetectorHelper? = null
-    private var resultsState = mutableStateOf<ObjectDetectorResult?>(null)
+    private var resultsState by mutableStateOf<ObjectDetectorResult?>(null)
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -57,7 +59,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    CameraScreen(resultsState.value)
+                    CameraScreen(resultsState)
                 }
             }
         }
@@ -83,7 +85,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
     }
 
     override fun onResults(results: ObjectDetectorResult, inferenceTime: Long) {
-        resultsState.value = results
+        resultsState = results
     }
 
     @Composable
@@ -118,7 +120,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                                 bitmap.copyPixelsFromBuffer(imageProxy.planes[0].buffer)
                                 objectDetectorHelper?.detectLiveStream(
                                     bitmap,
-                                    imageProxy.sensorToWorldTransformMatrix.let { System.currentTimeMillis() }
+                                    System.currentTimeMillis()
                                 )
                                 imageProxy.close()
                             }
