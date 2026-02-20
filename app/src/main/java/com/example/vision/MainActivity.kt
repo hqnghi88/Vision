@@ -110,6 +110,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
 
                     val imageAnalyzer = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .setTargetResolution(android.util.Size(640, 480))
                         .setTargetRotation(view.display.rotation)
                         .build()
                         .also {

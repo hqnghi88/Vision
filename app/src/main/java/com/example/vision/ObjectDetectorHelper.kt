@@ -26,7 +26,7 @@ class ObjectDetectorHelper(
     fun setupObjectDetector() {
         val baseOptionsBuilder = BaseOptions.builder()
             .setModelAssetPath("efficientdet_lite0.tflite")
-            .setDelegate(Delegate.CPU)
+            .setDelegate(Delegate.GPU)
 
         val optionsBuilder = ObjectDetector.ObjectDetectorOptions.builder()
             .setBaseOptions(baseOptionsBuilder.build())
