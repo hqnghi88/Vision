@@ -6,6 +6,7 @@ import android.os.SystemClock
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
+import com.google.mediapipe.tasks.vision.core.ImageProcessingOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorResult
@@ -43,10 +44,12 @@ class ObjectDetectorHelper(
         }
     }
 
-    fun detectLiveStream(bitmap: Bitmap, frameTime: Long) {
-        android.util.Log.d("Vision", "Detecting frame at $frameTime")
+    fun detectLiveStream(bitmap: Bitmap, rotation: Int, frameTime: Long) {
         val mpImage = BitmapImageBuilder(bitmap).build()
-        objectDetector?.detectAsync(mpImage, frameTime)
+        val imageProcessingOptions = ImageProcessingOptions.builder()
+            .setRotationDegrees(rotation)
+            .build()
+        objectDetector?.detectAsync(mpImage, imageProcessingOptions, frameTime)
     }
 
     private fun returnLivestreamResult(
