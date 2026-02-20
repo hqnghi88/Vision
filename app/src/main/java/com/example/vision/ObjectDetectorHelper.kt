@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetector
 import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorResult
@@ -25,7 +26,7 @@ class ObjectDetectorHelper(
     fun setupObjectDetector() {
         val baseOptionsBuilder = BaseOptions.builder()
             .setModelAssetPath("efficientdet_lite0.tflite")
-            .setDelegate(com.google.mediapipe.tasks.core.Delegate.GPU)
+            .setDelegate(Delegate.GPU)
 
         val optionsBuilder = ObjectDetector.ObjectDetectorOptions.builder()
             .setBaseOptions(baseOptionsBuilder.build())
