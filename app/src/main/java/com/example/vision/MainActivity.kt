@@ -109,6 +109,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                     val imageAnalyzer = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                        .setTargetRotation(view.display.rotation)
                         .build()
                         .also {
                             it.setAnalyzer(cameraExecutor) { imageProxy ->
@@ -118,8 +119,17 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                                     Bitmap.Config.ARGB_8888
                                 )
                                 bitmap.copyPixelsFromBuffer(imageProxy.planes[0].buffer)
+                                
+                                // Rotate bitmap if necessary based on imageProxy.imageInfo.rotationDegrees
+                                val matrix = android.graphics.Matrix().apply {
+                                    postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
+                                }
+                                val rotatedBitmap = Bitmap.createBitmap(
+                                    bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+                                )
+
                                 objectDetectorHelper?.detectLiveStream(
-                                    bitmap,
+                                    rotatedBitmap,
                                     System.currentTimeMillis()
                                 )
                                 imageProxy.close()
@@ -172,16 +182,22 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .background(Color.Black.copy(alpha = 0.3f))
+                    .padding(top = 40.dp, start = 16.dp, bottom = 16.dp)
             ) {
+                Text(
+                    text = if (results == null || results.detections().isEmpty()) "Scanning..." else "Detected:",
+                    color = Color.Yellow,
+                    style = MaterialTheme.typography.titleLarge
+                )
                 results?.detections()?.forEach { detection ->
                     val category = detection.categories().firstOrNull()
                     if (category != null) {
                         Text(
-                            text = "${category.categoryName()}: ${(category.score() * 100).toInt()}%",
+                            text = "• ${category.categoryName()} (${(category.score() * 100).toInt()}%)",
                             color = Color.White,
-                            style = MaterialTheme.typography.headlineSmall,
-                            modifier = Modifier.padding(bottom = 4.dp)
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(top = 4.dp)
                         )
                     }
                 }
