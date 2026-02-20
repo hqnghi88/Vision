@@ -124,8 +124,11 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                                     bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
                                 )
 
+                                // Scaling down for the model's preferred input size (around 320x320)
+                                val scaledBitmap = Bitmap.createScaledBitmap(rotatedBitmap, 320, 320, true)
+
                                 objectDetectorHelper?.detectLiveStream(
-                                    rotatedBitmap,
+                                    scaledBitmap,
                                     SystemClock.uptimeMillis()
                                 )
                                 imageProxy.close()
