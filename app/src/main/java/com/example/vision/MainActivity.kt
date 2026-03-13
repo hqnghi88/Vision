@@ -37,7 +37,13 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
 
     private lateinit var cameraExecutor: ExecutorService
     private var objectDetectorHelper: ObjectDetectorHelper? = null
-    private var resultsState by mutableStateOf<ObjectDetectorResult?>(null)
+    private var resultsState by mutableStateOf<DetectionState?>(null)
+    
+    data class DetectionState(
+        val results: ObjectDetectorResult,
+        val frameWidth: Int,
+        val frameHeight: Int
+    )
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -88,44 +94,50 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
     }
 
     override fun onResults(results: ObjectDetectorResult, inferenceTime: Long) {
-        resultsState = results
+        // MediaPipe results for Object Detection contain frame information in the first detection's image processing options or just use the bitmap dimensions from the helper.
+        // However, we'll pass the dimensions from the analyzer to be sure.
+    }
+    
+    fun updateResults(results: ObjectDetectorResult, width: Int, height: Int) {
+        resultsState = DetectionState(results, width, height)
     }
 
     @Composable
-    fun CameraScreen(results: ObjectDetectorResult?) {
+    fun CameraScreen(state: DetectionState?) {
         val context = LocalContext.current
         val lifecycleOwner = LocalLifecycleOwner.current
         val previewView = remember { PreviewView(context) }
 
         Box(modifier = Modifier.fillMaxSize()) {
-            AndroidView(
-                factory = { previewView },
-                modifier = Modifier.fillMaxSize()
-            ) { view ->
+            LaunchedEffect(Unit) {
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
                 cameraProviderFuture.addListener({
                     val cameraProvider = cameraProviderFuture.get()
                     val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(view.surfaceProvider)
+                        it.setSurfaceProvider(previewView.surfaceProvider)
                     }
 
                     val imageAnalyzer = ImageAnalysis.Builder()
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .setTargetResolution(android.util.Size(640, 480))
-                        .setTargetRotation(view.display.rotation)
+                        .setTargetRotation(previewView.display.rotation)
                         .build()
                         .also {
                             it.setAnalyzer(cameraExecutor) { imageProxy ->
-                                // Convert to bitmap once (CameraX handles the YUV->RGB)
                                 val bitmap = imageProxy.toBitmap()
                                 val rotation = imageProxy.imageInfo.rotationDegrees
+                                val width = if (rotation == 90 || rotation == 270) imageProxy.height else imageProxy.width
+                                val height = if (rotation == 90 || rotation == 270) imageProxy.width else imageProxy.height
 
-                                // Let MediaPipe handle the rotation and scaling internally
                                 objectDetectorHelper?.detectLiveStream(
                                     bitmap,
                                     rotation,
                                     SystemClock.uptimeMillis()
-                                )
+                                ) { results ->
+                                    runOnUiThread {
+                                        updateResults(results, width, height)
+                                    }
+                                }
                                 imageProxy.close()
                             }
                         }
@@ -144,30 +156,32 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                 }, ContextCompat.getMainExecutor(context))
             }
 
-            // Overlay for detections
-            results?.let {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    it.detections().forEach { detection ->
-                        val boundingBox = detection.boundingBox()
-                        val categories = detection.categories()
-                        val text = categories.firstOrNull()?.categoryName() ?: "Unknown"
-                        val confidence = categories.firstOrNull()?.score() ?: 0f
+            AndroidView(
+                factory = { previewView },
+                modifier = Modifier.fillMaxSize()
+            )
 
-                        // Scale coordinates
-                        val left = boundingBox.left * size.width / 440f // Based on model input size
-                        val top = boundingBox.top * size.height / 440f
-                        val right = boundingBox.right * size.width / 440f
-                        val bottom = boundingBox.bottom * size.height / 440f
+            // Overlay for detections
+            resultsState?.let { state ->
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    state.results.detections().forEach { detection ->
+                        val boundingBox = detection.boundingBox()
+                        
+                        // Scale coordinates based on the ratio between the frame and the current view size
+                        val scaleX = size.width / state.frameWidth
+                        val scaleY = size.height / state.frameHeight
+
+                        val left = boundingBox.left * scaleX
+                        val top = boundingBox.top * scaleY
+                        val right = boundingBox.right * scaleX
+                        val bottom = boundingBox.bottom * scaleY
 
                         drawRect(
                             color = Color.Green,
                             topLeft = androidx.compose.ui.geometry.Offset(left, top),
                             size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
-                            style = Stroke(width = 4.dp.toPx())
+                            style = Stroke(width = 2.dp.toPx())
                         )
-                        
-                        // We can't easily draw text in Compose Canvas without a native paint, 
-                        // but we can use this for the box.
                     }
                 }
             }
@@ -179,9 +193,10 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                     .background(Color.Black.copy(alpha = 0.3f))
                     .padding(top = 40.dp, start = 16.dp, bottom = 16.dp)
             ) {
+                val detections = resultsState?.results?.detections() ?: emptyList()
                 val statusText = when {
-                    results == null -> "Initializing AI..."
-                    results.detections().isEmpty() -> "AI Active: No objects found"
+                    state == null -> "Initializing AI..."
+                    detections.isEmpty() -> "AI Active: No objects found"
                     else -> "Detected:"
                 }
                 Text(
@@ -189,7 +204,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                     color = Color.Yellow,
                     style = MaterialTheme.typography.titleLarge
                 )
-                results?.detections()?.forEach { detection ->
+                detections.forEach { detection ->
                     val category = detection.categories().firstOrNull()
                     if (category != null) {
                         Text(

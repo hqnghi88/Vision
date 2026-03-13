@@ -17,6 +17,7 @@ class ObjectDetectorHelper(
     var maxResults: Int = 5,
     val listener: DetectorListener
 ) {
+    private var resultCallback: ((ObjectDetectorResult) -> Unit)? = null
 
     private var objectDetector: ObjectDetector? = null
 
@@ -44,7 +45,8 @@ class ObjectDetectorHelper(
         }
     }
 
-    fun detectLiveStream(bitmap: Bitmap, rotation: Int, frameTime: Long) {
+    fun detectLiveStream(bitmap: Bitmap, rotation: Int, frameTime: Long, callback: (ObjectDetectorResult) -> Unit) {
+        this.resultCallback = callback
         val mpImage = BitmapImageBuilder(bitmap).build()
         val imageProcessingOptions = ImageProcessingOptions.builder()
             .setRotationDegrees(rotation)
@@ -58,8 +60,8 @@ class ObjectDetectorHelper(
     ) {
         val finishTimeMs = SystemClock.uptimeMillis()
         val inferenceTime = finishTimeMs - result.timestampMs()
-        // Always notify the listener to update the UI state
         listener.onResults(result, inferenceTime)
+        resultCallback?.invoke(result)
     }
 
     private fun returnLivestreamError(error: RuntimeException) {
