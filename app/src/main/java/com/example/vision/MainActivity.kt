@@ -55,8 +55,13 @@ import android.content.Intent
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.content.Context
 
-class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener {
+class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener, SensorEventListener {
 
     private lateinit var cameraExecutor: ExecutorService
     private var objectDetectorHelper: ObjectDetectorHelper? = null
@@ -75,6 +80,11 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
     
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening by mutableStateOf(false)
+
+    private lateinit var sensorManager: SensorManager
+    private var rotationSensor: Sensor? = null
+    private var currentPitch = 0f
+    private var currentRoll = 0f
     
     data class DetectionState(
         val results: ObjectDetectorResult?,
@@ -138,7 +148,37 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                 arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
             )
         }
+
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        rotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
     }
+
+    override fun onResume() {
+        super.onResume()
+        rotationSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sensorManager.unregisterListener(this)
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event?.sensor?.type == Sensor.TYPE_ROTATION_VECTOR) {
+            val rotationMatrix = FloatArray(9)
+            SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+            val orientation = FloatArray(3)
+            SensorManager.getOrientation(rotationMatrix, orientation)
+            
+            // azimuth, pitch, roll
+            currentPitch = orientation[1]
+            currentRoll = orientation[2]
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun startCamera() {
         // Actual implementation is inside CameraScreen's LaunchedEffect
@@ -267,7 +307,9 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
             activeCommand,
             width,
             height,
-            rotation
+            rotation,
+            currentPitch,
+            currentRoll
         )
 
         // Perform Smoothing on Overlays
@@ -354,7 +396,6 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
         isActive: Boolean,
         command: String
     ) {
-        Log.e("Vision", "RECOMPOSE: active=$isActive cmd=$command")
         val context = LocalContext.current
         val lifecycleOwner = LocalLifecycleOwner.current
         val previewView = remember { 
@@ -413,13 +454,14 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
             }, ContextCompat.getMainExecutor(context))
         }
 
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .then(
                     if (isActive) Modifier.border(4.dp, Color.Cyan) else Modifier
                 )
         ) {
+            val isLandscape = maxWidth > maxHeight
             // Fullscreen Camera Preview
             AndroidView(
                 factory = { previewView },
@@ -562,7 +604,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .fillMaxHeight(if (size.width > size.height) 0.3f else 0.4f) // Less space in landscape
+                    .fillMaxHeight(if (isLandscape) 0.3f else 0.4f) // Less space in landscape
                     .background(Color.Black.copy(alpha = 0.15f))
                     .padding(4.dp)
             ) {
@@ -616,7 +658,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
             state == null -> "Initializing..."
             detections.isEmpty() -> "" 
             command.contains("warn", ignoreCase = true) && objects.isNotEmpty() -> "WARNING: Hazards Present"
-            else -> state.opinion.message
+            else -> state.opinion?.message ?: ""
         }
 
         if (statusText.isBlank()) return

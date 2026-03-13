@@ -48,7 +48,9 @@ class VisualAssistantEngine {
         command: String, 
         frameWidth: Int, 
         frameHeight: Int,
-        rotation: Int
+        rotation: Int,
+        pitch: Float = 0f, // in radians
+        roll: Float = 0f  // in radians
     ): AssistantOpinion {
         val mode = determineMode(command)
         val detections = results?.detections() ?: emptyList()
@@ -79,15 +81,12 @@ class VisualAssistantEngine {
             }
 
             Mode.PARKING_ASSISTANT -> {
-                // Logic: We want lines to appear "Bottom to Top" on the SCREEN.
-                // In Portrait (90 rot), "Down" on screen is often "Left" in sensor coords.
+                // Realistic Road Perspective:
+                // 1. Lines应该从屏幕底部边缘开始（代表车辆宽度）
+                // 2. 消失点（Vanishing Point）应该随着手机倾斜（Pitch）上下移动
                 
-                // We'll define points in Screen Normalized [0,1] and convert to sensor coords.
                 fun screenToSensor(sx: Float, sy: Float): Pair<Float, Float> {
                     return when (rotation) {
-                        // Portrait (90): 
-                        // Screen Y (Top to Bottom) maps to Sensor X (0 to 640)
-                        // Screen X (Left to Right) maps to Sensor Y (480 to 0)
                         90 -> (sy * frameWidth).toFloat() to ((1f - sx) * frameHeight).toFloat()
                         270 -> ((1f - sy) * frameWidth).toFloat() to (sx * frameHeight).toFloat()
                         180 -> ((1f - sx) * frameWidth).toFloat() to ((1f - sy) * frameHeight).toFloat()
@@ -95,44 +94,74 @@ class VisualAssistantEngine {
                     }
                 }
 
-                val bottomY = 0.90f
-                val horizonY = 0.40f
-                val bottomWidth = 0.20f
-                val topWidth = 0.08f
-                val centerX = 0.5f
+                // Adjust Horizon: 0.0 is top, 1.0 is bottom.
+                // When looking down (negative pitch), horizon moves UP (toward 0).
+                // Default horizon at 0.45 (slightly below center for dash mount).
+                val pitchCorrection = (pitch / (Math.PI.toFloat() / 2.5f)) * 0.4f
+                val horizonY = (0.45f + pitchCorrection).coerceIn(0.2f, 0.7f)
+                
+                // Roll adjusts the "lean" of the lines
+                val rollCorrection = (roll / (Math.PI.toFloat() / 4f)) * 0.15f
+                val centerX = (0.5f + rollCorrection).coerceIn(0.4f, 0.6f)
+
+                // Wide base at the bottom, narrow at horizon
+                val bottomY = 1.0f 
+                val nearWidth = 0.45f // Much wider at the bottom to match car width
+                val farWidth = 0.05f  // Very narrow at horizon for perspective
 
                 // Left Guide (Cyan)
-                val lStart = screenToSensor(centerX - bottomWidth, bottomY)
-                val lEnd = screenToSensor(centerX - topWidth, horizonY)
-                overlays.add(OverlayElement.PathLine(lStart.first, lStart.second, lEnd.first, lEnd.second, Color.Cyan, 8f))
+                val lStart = screenToSensor(centerX - nearWidth, bottomY)
+                val lEnd = screenToSensor(centerX - farWidth, horizonY)
+                overlays.add(OverlayElement.PathLine(lStart.first, lStart.second, lEnd.first, lEnd.second, Color.Cyan, 12f))
 
                 // Right Guide (Cyan)
-                val rStart = screenToSensor(centerX + bottomWidth, bottomY)
-                val rEnd = screenToSensor(centerX + topWidth, horizonY)
-                overlays.add(OverlayElement.PathLine(rStart.first, rStart.second, rEnd.first, rEnd.second, Color.Cyan, 8f))
+                val rStart = screenToSensor(centerX + nearWidth, bottomY)
+                val rEnd = screenToSensor(centerX + farWidth, horizonY)
+                overlays.add(OverlayElement.PathLine(rStart.first, rStart.second, rEnd.first, rEnd.second, Color.Cyan, 12f))
 
-                // Markers (Horizontal-looking guides on the floor)
-                val steps = listOf(0.1f, 0.3f, 0.5f)
-                steps.forEachIndexed { index, ratio ->
+                // Distance Markers (Ground-relative steps)
+                // Use a non-linear scale for markers to simulate depth (1m, 3m, 5m etc)
+                val distanceSteps = listOf(0.15f, 0.45f, 0.75f)
+                distanceSteps.forEachIndexed { index, ratio ->
                     val y = bottomY - (bottomY - horizonY) * ratio
-                    val currentWidth = bottomWidth - (bottomWidth - topWidth) * ratio
+                    val currentWidth = nearWidth - (nearWidth - farWidth) * ratio
+                    
                     val color = when(index) {
                         0 -> Color.Green
                         1 -> Color.Yellow
                         else -> Color.Red
-                    }.copy(alpha = 0.6f)
+                    }.copy(alpha = 0.8f)
                     
                     val p1 = screenToSensor(centerX - currentWidth, y)
                     val p2 = screenToSensor(centerX + currentWidth, y)
-                    overlays.add(OverlayElement.PathLine(p1.first, p1.second, p2.first, p2.second, color, 4f))
+                    overlays.add(OverlayElement.PathLine(p1.first, p1.second, p2.first, p2.second, color, 8f))
                 }
 
-                alerts.add("Parking Guide Active")
+                alerts.add("Safe Path Projected")
                 
-                // Highlight obstacles in the way
+                // Intelligent Obstacle Filter for Parking
                 detections.forEach { detection ->
                     val label = detection.categories().firstOrNull()?.categoryName()?.lowercase() ?: ""
-                    overlays.add(OverlayElement.Box(detection.boundingBox(), "OBSTACLE: $label", Color.Red))
+                    val box = detection.boundingBox()
+                    
+                    // Ignore confidence-challenged or irrelevant hits (like "airplane" in a parking lot)
+                    if (label == "airplane") return@forEach 
+                    
+                    // Map box center to screen coords
+                    val boxCenterScreenX = (box.centerX() / frameWidth) 
+                    val boxBottomScreenY = (box.bottom / frameHeight)
+                    
+                    // Only flag obstacles in the lower half of the view (close to road)
+                    if (boxBottomScreenY > horizonY) {
+                         // Check if obstacle is roughly within the horizontal range of the path
+                         val pathWidthAtY = nearWidth - (nearWidth - farWidth) * ((bottomY - boxBottomScreenY) / (bottomY - horizonY))
+                         val distFromCenter = Math.abs(boxCenterScreenX - centerX)
+                         
+                         if (distFromCenter < pathWidthAtY * 1.5f) {
+                             overlays.add(OverlayElement.Box(box, "CAUTION: $label", Color.Red, isCritical = true, pulse = true))
+                             alerts.add("OBSTACLE: $label")
+                         }
+                    }
                 }
             }
 
