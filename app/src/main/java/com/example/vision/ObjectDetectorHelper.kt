@@ -13,12 +13,10 @@ import com.google.mediapipe.tasks.vision.objectdetector.ObjectDetectorResult
 
 class ObjectDetectorHelper(
     val context: Context,
-    var threshold: Float = 0.3f,
+    var threshold: Float = 0.45f,
     var maxResults: Int = 5,
     val listener: DetectorListener
 ) {
-    private var resultCallback: ((ObjectDetectorResult) -> Unit)? = null
-
     private var objectDetector: ObjectDetector? = null
 
     init {
@@ -28,15 +26,19 @@ class ObjectDetectorHelper(
     fun setupObjectDetector() {
         val baseOptionsBuilder = BaseOptions.builder()
             .setModelAssetPath("efficientdet_lite0.tflite")
-            .setDelegate(Delegate.CPU)
+            .setDelegate(Delegate.CPU) // Revert to CPU for compatibility
 
         val optionsBuilder = ObjectDetector.ObjectDetectorOptions.builder()
             .setBaseOptions(baseOptionsBuilder.build())
             .setScoreThreshold(threshold)
             .setMaxResults(maxResults)
             .setRunningMode(RunningMode.LIVE_STREAM)
-            .setResultListener(this::returnLivestreamResult)
-            .setErrorListener(this::returnLivestreamError)
+            .setResultListener { result, _ ->
+                listener.onResults(result, SystemClock.uptimeMillis() - result.timestampMs())
+            }
+            .setErrorListener { error ->
+                listener.onError(error.message ?: "Unknown error")
+            }
 
         try {
             objectDetector = ObjectDetector.createFromOptions(context, optionsBuilder.build())
@@ -45,27 +47,12 @@ class ObjectDetectorHelper(
         }
     }
 
-    fun detectLiveStream(bitmap: Bitmap, rotation: Int, frameTime: Long, callback: (ObjectDetectorResult) -> Unit) {
-        this.resultCallback = callback
+    fun detectLiveStream(bitmap: Bitmap, rotation: Int, frameTime: Long) {
         val mpImage = BitmapImageBuilder(bitmap).build()
         val imageProcessingOptions = ImageProcessingOptions.builder()
             .setRotationDegrees(rotation)
             .build()
         objectDetector?.detectAsync(mpImage, imageProcessingOptions, frameTime)
-    }
-
-    private fun returnLivestreamResult(
-        result: ObjectDetectorResult,
-        input: com.google.mediapipe.framework.image.MPImage
-    ) {
-        val finishTimeMs = SystemClock.uptimeMillis()
-        val inferenceTime = finishTimeMs - result.timestampMs()
-        listener.onResults(result, inferenceTime)
-        resultCallback?.invoke(result)
-    }
-
-    private fun returnLivestreamError(error: RuntimeException) {
-        listener.onError(error.message ?: "An unknown error occurred")
     }
 
     interface DetectorListener {
