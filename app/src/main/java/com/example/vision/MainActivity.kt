@@ -139,35 +139,55 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
         val frameArea = (resultsState?.originalWidth ?: 640) * (resultsState?.originalHeight ?: 480)
         
         val salientDetections = detections.mapNotNull { detection ->
-            val label = detection.categories().firstOrNull()?.categoryName() ?: return@mapNotNull null
+            val label = (detection.categories().firstOrNull()?.categoryName() ?: return@mapNotNull null).lowercase()
             val box = detection.boundingBox()
             val occupancy = ((box.right - box.left) * (box.bottom - box.top)) / frameArea.toFloat()
             
-            // Is this label semantically mentioned in the command?
-            val isDirectlyRelevant = commandWords.any { label.lowercase().contains(it) || it.contains(label.lowercase()) }
+            // Critical categories for safety (Vulnerable Road Users)
+            val isVulnerable = label in listOf("person", "bicycle", "motorcycle", "dog", "cat")
+            val isVehicle = label in listOf("car", "truck", "bus")
             
-            // Universal reasoning factors (not tied to specific cases)
+            val isDirectlyRelevant = commandWords.any { label.contains(it) || it.contains(label) }
+            
             val reasons = mutableListOf<String>()
             var salienceScore = 0f
 
+            // 1. Core Relevance
             if (isDirectlyRelevant) {
-                reasons.add("directly related to your request")
-                salienceScore += 0.8f
-            }
-            if (occupancy > 0.2f) {
-                reasons.add("it is physically prominent in your view")
-                salienceScore += 0.5f
-            }
-            if (isSafetyCritical && occupancy > 0.15f) {
-                reasons.add("potential immediate hazard due to proximity")
-                salienceScore += 0.6f
-            }
-            if (isObservational && occupancy > 0.05f) {
-                reasons.add("notable element in the current scene")
-                salienceScore += 0.3f
+                reasons.add("matching your request")
+                salienceScore += 0.9f
             }
 
-            if (salienceScore > 0.4f) {
+            // 2. Safety Hazard Reasoning (Logic for high-risk alerts)
+            if (isSafetyCritical) {
+                when {
+                    isVulnerable && occupancy > 0.03f -> {
+                        reasons.add("HAZARD: vulnerable subject in your vicinity")
+                        salienceScore += 1.2f // Guaranteed alert
+                    }
+                    isVehicle && occupancy > 0.35f -> {
+                        reasons.add("PROXIMITY WARNING: vehicle is dangerously close")
+                        salienceScore += 1.0f 
+                    }
+                    isVehicle && occupancy < 0.2f -> {
+                        // Suppress distant vehicles in safety mode
+                        return@mapNotNull null 
+                    }
+                }
+            }
+
+            // 3. Physical Salience (Logic for general observation)
+            if (occupancy > 0.25f) {
+                reasons.add("prominent in your field of view")
+                salienceScore += 0.5f
+            }
+            
+            if (isObservational && occupancy > 0.08f) {
+                reasons.add("notable scene element")
+                salienceScore += 0.4f
+            }
+
+            if (salienceScore > 0.6f) {
                 EvaluatedDetections(label, salienceScore, reasons)
             } else null
         }.sortedByDescending { it.score }.distinctBy { it.label }
@@ -177,17 +197,18 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
         // 3. Dynamic Response Synthesis
         val topAlerts = salientDetections.take(3)
         val description = when {
-            isSafetyCritical -> {
-                val detail = topAlerts.joinToString(", ") { "${it.label} (${it.highlights.first()})" }
-                "Safety Alert: I'm flagging $detail. Please be alert."
+            isSafetyCritical && topAlerts.any { it.highlights.any { h -> h.contains("HAZARD") || h.contains("WARNING") } } -> {
+                val alerts = topAlerts.filter { it.highlights.any { h -> h.contains("HAZARD") || h.contains("WARNING") } }
+                    .joinToString("; ") { "${it.label.uppercase()}: ${it.highlights.first()}" }
+                "CRITICAL: $alerts!"
             }
             isObservational -> {
                 val detail = topAlerts.joinToString(", ") { it.label }
-                "Observation: In response to '$activeCommand', I can see $detail."
+                "Observation: Under your request, I see $detail."
             }
             else -> {
                 val detail = topAlerts.joinToString(", ") { "${it.label} (${it.highlights.first()})" }
-                "Follow-up: I found $detail."
+                "Follow-up: Found $detail."
             }
         }
 
