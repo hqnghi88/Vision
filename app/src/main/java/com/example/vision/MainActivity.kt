@@ -55,8 +55,9 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
     
     data class DetectionState(
         val results: ObjectDetectorResult,
-        val frameWidth: Int,
-        val frameHeight: Int
+        val originalWidth: Int,
+        val originalHeight: Int,
+        val rotation: Int
     )
 
     data class ChatMessage(
@@ -113,19 +114,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
     }
 
     override fun onResults(results: ObjectDetectorResult, inferenceTime: Long) {
-        // MediaPipe results for Object Detection contain frame information in the first detection's image processing options or just use the bitmap dimensions from the helper.
-        // However, we'll pass the dimensions from the analyzer to be sure.
-    }
-    
-    fun updateResults(results: ObjectDetectorResult, width: Int, height: Int) {
-        resultsState = DetectionState(results, width, height)
-        
-        // Intelligence Layer: Only process periodically to avoid spamming the chat
-        val currentTime = SystemClock.uptimeMillis()
-        if (currentTime - lastDetectionTime > 2000) { // Every 2 seconds
-            processIntelligence(results)
-            lastDetectionTime = currentTime
-        }
+        // No-op, managed via detectLiveStream callback for better reactivity
     }
 
     private fun processIntelligence(results: ObjectDetectorResult) {
@@ -147,7 +136,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
         // 2. The Universal Salience Engine (Evaluates ANYTHING detected)
         class EvaluatedDetections(val label: String, val score: Float, val highlights: List<String>)
         
-        val frameArea = (resultsState?.frameWidth ?: 640) * (resultsState?.frameHeight ?: 480)
+        val frameArea = (resultsState?.originalWidth ?: 640) * (resultsState?.originalHeight ?: 480)
         
         val salientDetections = detections.mapNotNull { detection ->
             val label = detection.categories().firstOrNull()?.categoryName() ?: return@mapNotNull null
@@ -244,7 +233,8 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                                     SystemClock.uptimeMillis()
                                 ) { results ->
                                     runOnUiThread {
-                                        updateResults(results, width, height)
+                                        resultsState = DetectionState(results, imageProxy.width, imageProxy.height, rotation)
+                                        processIntelligence(results)
                                     }
                                 }
                             }
@@ -276,15 +266,47 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
             // Fullscreen Overlay for detections
             resultsState?.let { state ->
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    state.results.detections().forEach { detection ->
-                        val boundingBox = detection.boundingBox()
-                        val scaleX = size.width / state.frameWidth
-                        val scaleY = size.height / state.frameHeight
+                    val rotation = state.rotation
+                    val isRotated = rotation == 90 || rotation == 270
+                    
+                    val rotatedWidth = if (isRotated) state.originalHeight else state.originalWidth
+                    val rotatedHeight = if (isRotated) state.originalWidth else state.originalHeight
 
-                        val left = boundingBox.left * scaleX
-                        val top = boundingBox.top * scaleY
-                        val right = boundingBox.right * scaleX
-                        val bottom = boundingBox.bottom * scaleY
+                    // Calculate scale and offset for FILL_CENTER
+                    val scale = maxOf(size.width / rotatedWidth, size.height / rotatedHeight)
+                    val offsetX = (size.width - rotatedWidth * scale) / 2f
+                    val offsetY = (size.height - rotatedHeight * scale) / 2f
+
+                    state.results.detections().forEach { detection ->
+                        val box = detection.boundingBox()
+                        
+                        // Map coordinates from unrotated image to rotated UI space
+                        val (mapLeft, mapTop, mapRight, mapBottom) = when (rotation) {
+                            90 -> listOf(
+                                rotatedWidth - (box.bottom), // left
+                                box.left, // top
+                                rotatedWidth - (box.top), // right
+                                box.right // bottom
+                            )
+                            270 -> listOf(
+                                box.top,
+                                rotatedHeight - (box.right),
+                                box.bottom,
+                                rotatedHeight - (box.left)
+                            )
+                            180 -> listOf(
+                                state.originalWidth - box.right,
+                                state.originalHeight - box.bottom,
+                                state.originalWidth - box.left,
+                                state.originalHeight - box.top
+                            )
+                            else -> listOf(box.left, box.top, box.right, box.bottom)
+                        }
+
+                        val left = mapLeft * scale + offsetX
+                        val top = mapTop * scale + offsetY
+                        val right = mapRight * scale + offsetX
+                        val bottom = mapBottom * scale + offsetY
 
                         drawRect(
                             color = Color.Magenta,
