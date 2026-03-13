@@ -39,6 +39,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.text.font.FontWeight
 
 class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener {
@@ -129,74 +130,81 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
 
     private fun processIntelligence(results: ObjectDetectorResult) {
         val detections = results.detections()
-        if (detections.isEmpty()) {
-            if (lastAnalysisMessage.isNotEmpty() && !lastAnalysisMessage.contains("clear")) {
-                 // Don't silence immediately, but acknowledge clear environment
-            }
-            return
-        }
+        if (detections.isEmpty()) return
 
-        // 1. Analyze Command Intent (The "Policy")
-        val cmd = activeCommand.lowercase()
-        val isWarningMode = cmd.contains("warn") || cmd.contains("risk") || cmd.contains("danger") || cmd.contains("safe")
-        val isDescriptionMode = cmd.contains("describe") || cmd.contains("what") || cmd.contains("see")
-        val isSpecificSearch = !isWarningMode && !isDescriptionMode && cmd.split(" ").any { it.length > 3 }
+        // 1. Dynamic Intent & Sensitivity Analysis
+        val rawCommand = activeCommand.lowercase()
+        val commandWords = rawCommand.split(" ", ",", ".", "?").filter { it.length > 2 }.toSet()
+        
+        // Dynamic "Sensitivity" Factors
+        val isSafetyCritical = rawCommand.contains("warn") || rawCommand.contains("danger") || 
+                               rawCommand.contains("risk") || rawCommand.contains("safe") || 
+                               rawCommand.contains("careful")
+        
+        val isObservational = rawCommand.contains("describe") || rawCommand.contains("what") || 
+                              rawCommand.contains("tell") || rawCommand.contains("happen")
 
-        // 2. Evaluate each detection based on the Policy
-        class ReasonedDetection(val category: String, val reason: String)
+        // 2. The Universal Salience Engine (Evaluates ANYTHING detected)
+        class EvaluatedDetections(val label: String, val score: Float, val highlights: List<String>)
         
         val frameArea = (resultsState?.frameWidth ?: 640) * (resultsState?.frameHeight ?: 480)
         
-        val reasonedDetections = detections.mapNotNull { detection ->
-            val category = detection.categories().firstOrNull()?.categoryName() ?: "object"
+        val salientDetections = detections.mapNotNull { detection ->
+            val label = detection.categories().firstOrNull()?.categoryName() ?: return@mapNotNull null
             val box = detection.boundingBox()
-            val boxArea = (box.right - box.left) * (box.bottom - box.top)
-            val occupancy = boxArea / frameArea.toFloat()
+            val occupancy = ((box.right - box.left) * (box.bottom - box.top)) / frameArea.toFloat()
             
-            val isSpecificallyRequested = cmd.contains(category.lowercase())
-            val isAbnormallyClose = occupancy > 0.25f
+            // Is this label semantically mentioned in the command?
+            val isDirectlyRelevant = commandWords.any { label.lowercase().contains(it) || it.contains(label.lowercase()) }
             
-            when {
-                // Priority 1: User asked for this specific thing
-                isSpecificallyRequested -> {
-                    ReasonedDetection(category, "you asked to monitor this")
-                }
-                // Priority 2: Danger/Safe reasoning
-                isWarningMode -> {
-                    when {
-                        isAbnormallyClose -> ReasonedDetection(category, "it is very close to your path")
-                        category.lowercase() in listOf("person", "bicycle", "dog", "cat") -> 
-                            ReasonedDetection(category, "it is a mobile subject in your vicinity")
-                        else -> null // Ignore distant static objects in warning mode
-                    }
-                }
-                // Priority 3: General description
-                isDescriptionMode -> {
-                    ReasonedDetection(category, "it is part of the scene")
-                }
-                // Priority 4: Specific intent but object doesn't match
-                isSpecificSearch -> null
-                else -> null
+            // Universal reasoning factors (not tied to specific cases)
+            val reasons = mutableListOf<String>()
+            var salienceScore = 0f
+
+            if (isDirectlyRelevant) {
+                reasons.add("directly related to your request")
+                salienceScore += 0.8f
             }
-        }.distinctBy { it.category }
+            if (occupancy > 0.2f) {
+                reasons.add("it is physically prominent in your view")
+                salienceScore += 0.5f
+            }
+            if (isSafetyCritical && occupancy > 0.15f) {
+                reasons.add("potential immediate hazard due to proximity")
+                salienceScore += 0.6f
+            }
+            if (isObservational && occupancy > 0.05f) {
+                reasons.add("notable element in the current scene")
+                salienceScore += 0.3f
+            }
 
-        if (reasonedDetections.isEmpty()) return
+            if (salienceScore > 0.4f) {
+                EvaluatedDetections(label, salienceScore, reasons)
+            } else null
+        }.sortedByDescending { it.score }.distinctBy { it.label }
 
-        // 3. Synthesize the reasoning into a natural response
-        val description = if (isWarningMode) {
-            val alerts = reasonedDetections.joinToString("; ") { "${it.category} (${it.reason})" }
-            "Safety Assessment: I detected $alerts. Please be cautious."
-        } else if (isDescriptionMode) {
-            val items = reasonedDetections.joinToString(", ") { it.category }
-            "Scene Analysis: I see $items. Everything appears to be $cmd."
-        } else {
-            val items = reasonedDetections.joinToString(", ") { it.category }
-            "Found: $items. Matches your request for '$activeCommand'."
+        if (salientDetections.isEmpty()) return
+
+        // 3. Dynamic Response Synthesis
+        val topAlerts = salientDetections.take(3)
+        val description = when {
+            isSafetyCritical -> {
+                val detail = topAlerts.joinToString(", ") { "${it.label} (${it.highlights.first()})" }
+                "Safety Alert: I'm flagging $detail. Please be alert."
+            }
+            isObservational -> {
+                val detail = topAlerts.joinToString(", ") { it.label }
+                "Observation: In response to '$activeCommand', I can see $detail."
+            }
+            else -> {
+                val detail = topAlerts.joinToString(", ") { "${it.label} (${it.highlights.first()})" }
+                "Follow-up: I found $detail."
+            }
         }
 
-        // 4. Update Chat (with basic debouncing)
+        // 4. Update Interaction State
         if (description != lastAnalysisMessage && !description.contains("Command received")) {
-            Log.d("VisionAI", "Reasoning Update: $description")
+            Log.d("VisionAI", "Flexible Reasoning: $description")
             lastAnalysisMessage = description
             chatMessages.add(ChatMessage(description, false))
         }
@@ -258,54 +266,48 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
             }, ContextCompat.getMainExecutor(context))
         }
 
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Camera Section (Top)
-            Box(
-                modifier = Modifier
-                    .weight(0.65f)
-                    .fillMaxWidth()
-                    .background(Color.Black)
-            ) {
-                AndroidView(
-                    factory = { previewView },
-                    modifier = Modifier.fillMaxSize()
-                )
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Fullscreen Camera Preview
+            AndroidView(
+                factory = { previewView },
+                modifier = Modifier.fillMaxSize()
+            )
 
-                // Overlay for detections
-                resultsState?.let { state ->
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        state.results.detections().forEach { detection ->
-                            val boundingBox = detection.boundingBox()
-                            val scaleX = size.width / state.frameWidth
-                            val scaleY = size.height / state.frameHeight
+            // Fullscreen Overlay for detections
+            resultsState?.let { state ->
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    state.results.detections().forEach { detection ->
+                        val boundingBox = detection.boundingBox()
+                        val scaleX = size.width / state.frameWidth
+                        val scaleY = size.height / state.frameHeight
 
-                            val left = boundingBox.left * scaleX
-                            val top = boundingBox.top * scaleY
-                            val right = boundingBox.right * scaleX
-                            val bottom = boundingBox.bottom * scaleY
+                        val left = boundingBox.left * scaleX
+                        val top = boundingBox.top * scaleY
+                        val right = boundingBox.right * scaleX
+                        val bottom = boundingBox.bottom * scaleY
 
-                            drawRect(
-                                color = Color.Magenta,
-                                topLeft = androidx.compose.ui.geometry.Offset(left, top),
-                                size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
-                                style = Stroke(width = 2.dp.toPx())
-                            )
-                        }
+                        drawRect(
+                            color = Color.Magenta,
+                            topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                            size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
+                            style = Stroke(width = 2.dp.toPx())
+                        )
                     }
-                }
-
-                // Status Overlay (Floating at the bottom of camera section)
-                Box(modifier = Modifier.align(Alignment.BottomCenter)) {
-                    StatusOverlay(state)
                 }
             }
 
-            // Chat Section (Bottom)
+            // Top Status Bar (Transparent)
+            Box(modifier = Modifier.align(Alignment.TopCenter)) {
+                StatusOverlay(state)
+            }
+
+            // Bottom Chat Section (Transparent Overlay)
             Column(
                 modifier = Modifier
-                    .weight(0.35f)
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .fillMaxHeight(0.4f) // Chat covers bottom 40%
+                    .background(Color.Black.copy(alpha = 0.2f))
                     .padding(8.dp)
             ) {
                 // Chat History
@@ -371,8 +373,8 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.4f))
-                .padding(8.dp)
+                .background(Color.Black.copy(alpha = 0.25f)) // More subtle
+                .padding(12.dp)
         ) {
             Text(
                 text = statusText,
@@ -398,20 +400,21 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
             horizontalAlignment = if (msg.isUser) Alignment.End else Alignment.Start
         ) {
             Surface(
-                color = if (msg.isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                color = if (msg.isUser) MaterialTheme.colorScheme.primary.copy(alpha = 0.7f) 
+                        else Color.White.copy(alpha = 0.15f),
                 shape = RoundedCornerShape(
-                    topStart = 12.dp,
-                    topEnd = 12.dp,
-                    bottomStart = if (msg.isUser) 12.dp else 0.dp,
-                    bottomEnd = if (msg.isUser) 0.dp else 12.dp
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = if (msg.isUser) 16.dp else 4.dp,
+                    bottomEnd = if (msg.isUser) 4.dp else 16.dp
                 ),
-                tonalElevation = 2.dp
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f))
             ) {
                 Text(
                     text = msg.message,
                     modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (msg.isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+                    color = Color.White
                 )
             }
         }
@@ -437,15 +440,19 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
                     .clip(RoundedCornerShape(24.dp)),
                 placeholder = { Text("Ask about environment...") },
                 colors = TextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surface,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    focusedContainerColor = Color.Black.copy(alpha = 0.4f),
+                    unfocusedContainerColor = Color.Black.copy(alpha = 0.4f),
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedPlaceholderColor = Color.Gray,
+                    unfocusedPlaceholderColor = Color.Gray
                 ),
                 singleLine = true
             )
             Spacer(modifier = Modifier.width(8.dp))
             FloatingActionButton(
                 onClick = onSendClick,
-                containerColor = MaterialTheme.colorScheme.primary,
+                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
                 shape = RoundedCornerShape(24.dp),
                 modifier = Modifier.size(48.dp)
             ) {

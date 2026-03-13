@@ -20,8 +20,9 @@ Run the Android app "Vision" on a simulator on the user's Mac.
 - Done: Fixed GitHub Actions `OutOfMemoryError` and JNI stripping failure by increasing Gradle heap size and using `keepDebugSymbols`.
 - Done: Optimized app layout (65/35 split) to eliminate overlap and lag.
 - Done: Optimized app layout (65/35 split) to eliminate overlap and lag.
-- Done: Replaced rigid hardcoded category lists with a "Situational Reasoning" engine.
-- Done: AI now evaluates detections based on intent (Warning, Description, Search) and provides the "Why" (reasoning) for each alert.
+- Done: Optimized app layout to a modern "Fullscreen Transparent" design.
+- Done: Implemented glassmorphism (semi-transparent chat, subtle borders) for a premium AR-like feel.
+- Done: AI now operates as a Universal Intent Engine with flexible situational reasoning.
 - Now: Task completed.
 - Next: None.
 
