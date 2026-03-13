@@ -19,8 +19,10 @@ Run the Android app "Vision" on a simulator on the user's Mac.
 - Done: Improved real-time processing by updating UI on the main thread and using correct frame dimensions for coordinate scaling.
 - Done: Fixed GitHub Actions `OutOfMemoryError` and JNI stripping failure by increasing Gradle heap size and using `keepDebugSymbols`.
 - Done: Optimized app layout (65/35 split) to eliminate overlap and lag.
-- Done: Fixed AI responsiveness by implementing immediate command confirmation and a 2-second analysis loop with flicker reduction.
-- Now: Task completed. All features verified on emulator.
+- Done: Optimized app layout (65/35 split) to eliminate overlap and lag.
+- Done: Replaced rigid hardcoded category lists with a "Situational Reasoning" engine.
+- Done: AI now evaluates detections based on intent (Warning, Description, Search) and provides the "Why" (reasoning) for each alert.
+- Now: Task completed.
 - Next: None.
 
 ## Open questions (UNCONFIRMED if needed)

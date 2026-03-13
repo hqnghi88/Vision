@@ -129,28 +129,74 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener 
 
     private fun processIntelligence(results: ObjectDetectorResult) {
         val detections = results.detections()
-        val currentObjects = detections.mapNotNull { it.categories().firstOrNull()?.categoryName() }.distinct()
-        
-        // Simpler sticky logic: only trust "No objects" if we've seen it 2 times in a row
-        val objects = if (currentObjects.isEmpty() && lastAnalysisMessage.startsWith("I") && !lastAnalysisMessage.contains("Scanning")) {
-             // Heuristic: if we had objects and now they're gone, maybe it's flicker. 
-             // For simplicity, let's just use current results for now but avoid adding "Scanning" too often.
-             currentObjects
-        } else currentObjects
-
-        val description = when {
-            objects.isEmpty() -> "" // Silence "nothing found" messages
-            activeCommand.contains("describe", ignoreCase = true) -> {
-                "Update: Environment contains ${objects.joinToString(", ")}."
+        if (detections.isEmpty()) {
+            if (lastAnalysisMessage.isNotEmpty() && !lastAnalysisMessage.contains("clear")) {
+                 // Don't silence immediately, but acknowledge clear environment
             }
-            activeCommand.contains("warn", ignoreCase = true) || activeCommand.contains("abnormal", ignoreCase = true) -> {
-                "ALERT: Potential abnormal detected: ${objects.joinToString(" and ")}."
-            }
-            else -> "Detected ${objects.joinToString(", ")} for \"$activeCommand\"."
+            return
         }
 
-        if (description.isNotEmpty() && description != lastAnalysisMessage && !description.contains("Command received")) {
-            Log.d("VisionAI", "AI Update: $description")
+        // 1. Analyze Command Intent (The "Policy")
+        val cmd = activeCommand.lowercase()
+        val isWarningMode = cmd.contains("warn") || cmd.contains("risk") || cmd.contains("danger") || cmd.contains("safe")
+        val isDescriptionMode = cmd.contains("describe") || cmd.contains("what") || cmd.contains("see")
+        val isSpecificSearch = !isWarningMode && !isDescriptionMode && cmd.split(" ").any { it.length > 3 }
+
+        // 2. Evaluate each detection based on the Policy
+        class ReasonedDetection(val category: String, val reason: String)
+        
+        val frameArea = (resultsState?.frameWidth ?: 640) * (resultsState?.frameHeight ?: 480)
+        
+        val reasonedDetections = detections.mapNotNull { detection ->
+            val category = detection.categories().firstOrNull()?.categoryName() ?: "object"
+            val box = detection.boundingBox()
+            val boxArea = (box.right - box.left) * (box.bottom - box.top)
+            val occupancy = boxArea / frameArea.toFloat()
+            
+            val isSpecificallyRequested = cmd.contains(category.lowercase())
+            val isAbnormallyClose = occupancy > 0.25f
+            
+            when {
+                // Priority 1: User asked for this specific thing
+                isSpecificallyRequested -> {
+                    ReasonedDetection(category, "you asked to monitor this")
+                }
+                // Priority 2: Danger/Safe reasoning
+                isWarningMode -> {
+                    when {
+                        isAbnormallyClose -> ReasonedDetection(category, "it is very close to your path")
+                        category.lowercase() in listOf("person", "bicycle", "dog", "cat") -> 
+                            ReasonedDetection(category, "it is a mobile subject in your vicinity")
+                        else -> null // Ignore distant static objects in warning mode
+                    }
+                }
+                // Priority 3: General description
+                isDescriptionMode -> {
+                    ReasonedDetection(category, "it is part of the scene")
+                }
+                // Priority 4: Specific intent but object doesn't match
+                isSpecificSearch -> null
+                else -> null
+            }
+        }.distinctBy { it.category }
+
+        if (reasonedDetections.isEmpty()) return
+
+        // 3. Synthesize the reasoning into a natural response
+        val description = if (isWarningMode) {
+            val alerts = reasonedDetections.joinToString("; ") { "${it.category} (${it.reason})" }
+            "Safety Assessment: I detected $alerts. Please be cautious."
+        } else if (isDescriptionMode) {
+            val items = reasonedDetections.joinToString(", ") { it.category }
+            "Scene Analysis: I see $items. Everything appears to be $cmd."
+        } else {
+            val items = reasonedDetections.joinToString(", ") { it.category }
+            "Found: $items. Matches your request for '$activeCommand'."
+        }
+
+        // 4. Update Chat (with basic debouncing)
+        if (description != lastAnalysisMessage && !description.contains("Command received")) {
+            Log.d("VisionAI", "Reasoning Update: $description")
             lastAnalysisMessage = description
             chatMessages.add(ChatMessage(description, false))
         }
