@@ -17,7 +17,7 @@ Run the Android app "Vision" on a simulator on the user's Mac.
 - Done: Identified project, SDK, emulator, started emulator, built and installed app, launched app, and verified via screenshot.
 - Done: Fixed UI flickering by moving CameraX binding to `LaunchedEffect` and optimizing the detection callback loop.
 - Done: Improved real-time processing by updating UI on the main thread and using correct frame dimensions for coordinate scaling.
-- Done: Fixed GitHub Actions `OutOfMemoryError` and JNI stripping failure by increasing Gradle heap size and excluding MediaPipe JNI libs from packaging/stripping.
+- Done: Fixed GitHub Actions `OutOfMemoryError` and JNI stripping failure by increasing Gradle heap size and using `keepDebugSymbols` instead of `excludes` (which was causing crashes on physical devices).
 - Now: Task completed.
 - Next: None.
 
