@@ -22,7 +22,17 @@ Transform "Vision" into a multi-purpose Visual Assistant (AR-style) that provide
 - Done: Fixed Park Mode cyan lines alignment by integrating IMU sensor data.
 - Done: Refined perspective projection for more realistic "pilot" guidance.
 - Done: Implemented intelligent obstacle filtering for path-relative hazards.
-- Now: Verifying second iteration of alignment with the user.
+- Done: Added visual PathPolygon clipping logic to stop AR parking lines exactly at obstacle with a dynamic color shift (Cyan -> Red).
+- Done: Deployed revised app to ADB device.
+- Done: Tuned `nearWidth` from `0.38f` to `0.24f` to tighten string angle closer to true road margins.
+- Done: Added ultra-fast pixel scanline lane detector in `VisualAssistantEngine`.
+- Done: Added `FLAG_KEEP_SCREEN_ON` to MainActivity so screen doesn't sleep while driving.
+- Done: Pivoted to "Option B" (Proximity Radar), but user immediately requested lines back for steering guidance.
+- Done: Restored the perspective AR tracks and dynamic lane detector, but integrated the radar proximity heuristics into the path coloring and added dynamic "STEER LEFT" / "STEER RIGHT" text suggestions based on obstacle position.
+- Done: Integrated Android `TextToSpeech` into `MainActivity` to audibly announce the dynamic proximity alerts and steering advice in real-time.
+- Done: Implemented a robust TTS debouncer logic to prevent excessive or overlapping voice spam, forcing a cohesive 1.2 to 3.0-second delay between continuous speech cues depending on criticality.
+- Done: Stripped verbose object identification (e.g., "car", "person") from the parking alert text, reducing the auditory output strictly to concise driving commands ("STEER LEFT", "STEER RIGHT", "STOP!").
+- Now: Waiting for user test of the finalized vocal-only steering guidance mode.
 - Next: Finalize documentation.
 
 ## Open questions (UNCONFIRMED if needed)

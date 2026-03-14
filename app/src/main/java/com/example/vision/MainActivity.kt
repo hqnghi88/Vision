@@ -55,6 +55,8 @@ import android.content.Intent
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import java.util.Locale
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -80,6 +82,10 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
     
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening by mutableStateOf(false)
+    private var textToSpeech: TextToSpeech? = null
+    private var lastSpeechTime = 0L
+
+    private var lastBitmap: Bitmap? = null
 
     private lateinit var sensorManager: SensorManager
     private var rotationSensor: Sensor? = null
@@ -119,6 +125,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         
         cameraExecutor = Executors.newSingleThreadExecutor()
         
@@ -128,6 +135,12 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
         )
 
         setupSpeechRecognizer()
+        
+        textToSpeech = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                textToSpeech?.language = Locale.US
+            }
+        }
 
         setContent {
             MaterialTheme {
@@ -163,6 +176,14 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
     override fun onPause() {
         super.onPause()
         sensorManager.unregisterListener(this)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        speechRecognizer?.destroy()
+        cameraExecutor.shutdown()
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
@@ -296,6 +317,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
     }
 
     private fun processIntelligence(results: ObjectDetectorResult?, width: Int, height: Int, rotation: Int) {
+        val bitmap = lastBitmap
         Log.v("Vision", "processIntelligence: results=${results != null} size=${width}x${height}")
         // Allow width/height 0 only if we have a state to pull from, otherwise wait for camera
         if (width <= 0 || height <= 0) return
@@ -309,7 +331,8 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
             height,
             rotation,
             currentPitch,
-            currentRoll
+            currentRoll,
+            bitmap
         )
 
         // Perform Smoothing on Overlays
@@ -371,6 +394,16 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
         if (opinion.message != lastAnalysisMessage && opinion.message.isNotBlank()) {
             lastAnalysisMessage = opinion.message
             chatMessages.add(ChatMessage(opinion.message, false))
+            
+            val now = SystemClock.uptimeMillis()
+            // Throttle voice announcements to prevent overlapping spam.
+            // Critical warnings (like STOP!) get a shorter cooldown to ensure they punch through.
+            val minCooldown = if (opinion.isCritical) 1200L else 3000L
+            
+            if (now - lastSpeechTime > minCooldown) {
+                lastSpeechTime = now
+                textToSpeech?.speak(opinion.message, TextToSpeech.QUEUE_FLUSH, null, null)
+            }
         }
     }
 
@@ -429,6 +462,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
                                 lastFrameWidth = imageProxy.width
                                 lastFrameHeight = imageProxy.height
                                 lastFrameRotation = rotation
+                                lastBitmap = bitmap
                                 
                                 objectDetectorHelper?.detectLiveStream(
                                     bitmap,
@@ -587,6 +621,23 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
                                     color = element.color,
                                     center = pos,
                                     radius = 10.dp.toPx()
+                                )
+                            }
+                            is OverlayElement.PathPolygon -> {
+                                val p1 = map(element.x1, element.y1)
+                                val p2 = map(element.x2, element.y2)
+                                val p3 = map(element.x3, element.y3)
+                                val p4 = map(element.x4, element.y4)
+                                val path = androidx.compose.ui.graphics.Path().apply {
+                                    moveTo(p1.x, p1.y)
+                                    lineTo(p2.x, p2.y)
+                                    lineTo(p3.x, p3.y)
+                                    lineTo(p4.x, p4.y)
+                                    close()
+                                }
+                                drawPath(
+                                    path = path,
+                                    color = element.color
                                 )
                             }
                         }
@@ -796,12 +847,5 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
                 Icon(Icons.Default.Send, contentDescription = "Send", tint = Color.White)
             }
         }
-    }
-
-
-    override fun onDestroy() {
-        super.onDestroy()
-        speechRecognizer?.destroy()
-        cameraExecutor.shutdown()
     }
 }
