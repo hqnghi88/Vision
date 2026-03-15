@@ -62,6 +62,9 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.content.Context
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
 class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener, SensorEventListener {
 
@@ -91,6 +94,9 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
     private var rotationSensor: Sensor? = null
     private var currentPitch = 0f
     private var currentRoll = 0f
+    
+    private val textRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    private var lastRecognizedTexts = emptyList<Pair<String, RectF>>()
     
     data class DetectionState(
         val results: ObjectDetectorResult?,
@@ -318,6 +324,7 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
 
     private fun processIntelligence(results: ObjectDetectorResult?, width: Int, height: Int, rotation: Int) {
         val bitmap = lastBitmap
+        val recognizedSigns = lastRecognizedTexts.toList()
         Log.v("Vision", "processIntelligence: results=${results != null} size=${width}x${height}")
         // Allow width/height 0 only if we have a state to pull from, otherwise wait for camera
         if (width <= 0 || height <= 0) return
@@ -332,7 +339,8 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
             rotation,
             currentPitch,
             currentRoll,
-            bitmap
+            bitmap,
+            recognizedSigns
         )
 
         // Perform Smoothing on Overlays
@@ -463,6 +471,15 @@ class MainActivity : ComponentActivity(), ObjectDetectorHelper.DetectorListener,
                                 lastFrameHeight = imageProxy.height
                                 lastFrameRotation = rotation
                                 lastBitmap = bitmap
+                                
+                                val inputImage = InputImage.fromBitmap(bitmap, rotation)
+                                textRecognizer.process(inputImage).addOnSuccessListener { textResult ->
+                                    val blocks = textResult.textBlocks.mapNotNull { block ->
+                                        val rect = block.boundingBox ?: return@mapNotNull null
+                                        Pair(block.text, RectF(rect.left.toFloat(), rect.top.toFloat(), rect.right.toFloat(), rect.bottom.toFloat()))
+                                    }
+                                    lastRecognizedTexts = blocks
+                                }
                                 
                                 objectDetectorHelper?.detectLiveStream(
                                     bitmap,

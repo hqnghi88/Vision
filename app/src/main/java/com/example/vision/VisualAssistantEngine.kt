@@ -49,6 +49,7 @@ class VisualAssistantEngine {
         GENERAL,
         SAFETY_WATCH,
         PARKING_ASSISTANT,
+        DRIVING_ASSISTANT,
         ENVIRONMENT_QUERY
     }
 
@@ -60,7 +61,8 @@ class VisualAssistantEngine {
         rotation: Int,
         pitch: Float = 0f, // in radians
         roll: Float = 0f,  // in radians
-        bitmap: Bitmap? = null
+        bitmap: Bitmap? = null,
+        recognizedTexts: List<Pair<String, RectF>> = emptyList()
     ): AssistantOpinion {
         val mode = determineMode(command)
         val detections = results?.detections() ?: emptyList()
@@ -220,27 +222,60 @@ class VisualAssistantEngine {
                 val actualStopY = bottomY - (bottomY - horizonY) * actualStopRatio
                 val actualStopWidth = nearWidth - (nearWidth - farWidth) * actualStopRatio
 
-                val pathColor = if (maxDangerLevel == 2) Color.Red else if (maxDangerLevel == 1) Color.Yellow else Color.Cyan
+                // We draw one clean track sequence based on the reference images
+                val segments = 15
+                val carCenterX = 0.5f // Static center of the car camera
+                
+                // Use a linear path to the detected vanishing point (centerX) to represent a straight lane in perspective
+                fun getPathPoint(t: Float): Triple<Float, Float, Float> {
+                    val y = bottomY - (bottomY - horizonY) * t
+                    val w = nearWidth - (nearWidth - farWidth) * t
+                    // A linear interpolation provides a clean representation of the straight lane direction
+                    val cx = carCenterX + (centerX - carCenterX) * t
+                    return Triple(cx - w, cx + w, y)
+                }
 
-                val bl = screenToSensor(centerX - nearWidth, bottomY)
-                val br = screenToSensor(centerX + nearWidth, bottomY)
-                val tr = screenToSensor(centerX + actualStopWidth, actualStopY)
-                val tl = screenToSensor(centerX - actualStopWidth, actualStopY)
-
-                overlays.add(OverlayElement.PathPolygon(bl.first, bl.second, br.first, br.second, tr.first, tr.second, tl.first, tl.second, pathColor.copy(alpha = 0.25f)))
-                overlays.add(OverlayElement.PathLine(bl.first, bl.second, tl.first, tl.second, pathColor, 12f))
-                overlays.add(OverlayElement.PathLine(br.first, br.second, tr.first, tr.second, pathColor, 12f))
-
-                val distanceSteps = listOf(0.15f to Color.Green, 0.45f to Color.Yellow, 0.8f to Color.Red)
-                distanceSteps.forEach { (ratio, baseColor) ->
-                    if (ratio <= actualStopRatio + 0.02f) {
-                        val y = bottomY - (bottomY - horizonY) * ratio
-                        val currentWidth = nearWidth - (nearWidth - farWidth) * ratio
-                        val markerColor = if (isPathBlocked) Color.Red else baseColor
-                        val p1 = screenToSensor(centerX - currentWidth, y)
-                        val p2 = screenToSensor(centerX + currentWidth, y)
-                        overlays.add(OverlayElement.PathLine(p1.first, p1.second, p2.first, p2.second, markerColor.copy(alpha = 0.9f), 6f))
+                var lastP = getPathPoint(0f)
+                for (i in 1..segments) {
+                    val t = i.toFloat() / segments
+                    if (t > actualStopRatio + 0.05f) break // Stop line slightly after occlusion
+                    
+                    val p = getPathPoint(t)
+                    
+                    // Match the parking reference colors: Red for immediate, Yellow for mid, Green for far.
+                    val segmentColor = if (maxDangerLevel == 2) Color.Red else {
+                        if (t <= 0.25f) Color.Red else if (t <= 0.6f) Color.Yellow else Color.Green
                     }
+                    
+                    val sl1 = screenToSensor(lastP.first, lastP.third)
+                    val sl2 = screenToSensor(p.first, p.third)
+                    // Draw thick lines
+                    overlays.add(OverlayElement.PathLine(sl1.first, sl1.second, sl2.first, sl2.second, segmentColor.copy(alpha = 0.9f), 12f))
+
+                    val sr1 = screenToSensor(lastP.second, lastP.third)
+                    val sr2 = screenToSensor(p.second, p.third)
+                    overlays.add(OverlayElement.PathLine(sr1.first, sr1.second, sr2.first, sr2.second, segmentColor.copy(alpha = 0.9f), 12f))
+                    
+                    lastP = p
+                }
+
+                // Make horizontal connecting bounds to mimic the reference image boundaries
+                listOf(0.25f, 0.6f).forEach { t ->
+                    if (t <= actualStopRatio + 0.05f) {
+                        val p = getPathPoint(t)
+                        val barColor = if (maxDangerLevel == 2) Color.Red else if (t <= 0.25f) Color.Red else Color.Yellow
+                        val l = screenToSensor(p.first, p.third)
+                        val r = screenToSensor(p.second, p.third)
+                        overlays.add(OverlayElement.PathLine(l.first, l.second, r.first, r.second, barColor.copy(alpha = 0.9f), 8f))
+                    }
+                }
+                
+                // Draw a final horizontal line where the track stops (if track is blocked)
+                if (isPathBlocked) {
+                    val pStop = getPathPoint(actualStopRatio)
+                    val l = screenToSensor(pStop.first, pStop.third)
+                    val r = screenToSensor(pStop.second, pStop.third)
+                    overlays.add(OverlayElement.PathLine(l.first, l.second, r.first, r.second, Color.Red, 14f))
                 }
 
                 if (isPathBlocked) {
@@ -255,6 +290,164 @@ class VisualAssistantEngine {
                 obstacleBoxes.forEach { ob ->
                     val color = if (ob.level >= 2) Color.Red else if (ob.level == 1) Color.Yellow else Color.Cyan
                     overlays.add(OverlayElement.Box(ob.rect, if (ob.level > 0) "CAUTION: ${ob.label}" else ob.label, color, isCritical = ob.level >= 2, pulse = ob.level > 0))
+                }
+            }
+            Mode.DRIVING_ASSISTANT -> {
+                val drivingAlerts = mutableSetOf<String>()
+                
+                // --- CUSTOM RED PROHIBITIVE SIGN DETECTION ---
+                if (bitmap != null) {
+                    try {
+                        val bw = bitmap.width
+                        val bh = bitmap.height
+                        val step = 4
+                        val cols = bw / step
+                        val rows = bh / step
+                        val isRed = BooleanArray(cols * rows)
+                        
+                        for (by in 0 until bh step step) {
+                            for (bx in 0 until bw step step) {
+                                val pixel = bitmap.getPixel(bx, by)
+                                val r = (pixel shr 16) and 0xff
+                                val g = (pixel shr 8) and 0xff
+                                val b = pixel and 0xff
+                                // Stricter Red color heuristic: avoid warm-lit trees and orange street lamps
+                                // Pure traffic red has very low green/blue compared to its red value
+                                if (r > 140 && g < r * 0.4f && b < r * 0.4f) {
+                                    val c = bx / step
+                                    val rIdx = by / step
+                                    if (c < cols && rIdx < rows) {
+                                        isRed[rIdx * cols + c] = true
+                                    }
+                                }
+                            }
+                        }
+                        
+                        val visited = BooleanArray(cols * rows)
+                        val q = IntArray(cols * rows * 2) // flattened queue for speed
+                        for (y in 0 until rows) {
+                            for (x in 0 until cols) {
+                                val idx = y * cols + x
+                                if (isRed[idx] && !visited[idx]) {
+                                    var minX = x; var maxX = x
+                                    var minY = y; var maxY = y
+                                    var count = 0
+                                    
+                                    var qHead = 0
+                                    var qTail = 0
+                                    q[qTail++] = x
+                                    q[qTail++] = y
+                                    visited[idx] = true
+                                    
+                                    while (qHead < qTail) {
+                                        val cx = q[qHead++]
+                                        val cy = q[qHead++]
+                                        count++
+                                        if (cx < minX) minX = cx
+                                        if (cx > maxX) maxX = cx
+                                        if (cy < minY) minY = cy
+                                        if (cy > maxY) maxY = cy
+                                        
+                                        // 4-way neighbors to avoid huge unconnected diagonal blobs
+                                        val ddx = intArrayOf(1, -1, 0, 0)
+                                        val ddy = intArrayOf(0, 0, 1, -1)
+                                        for (i in 0..3) {
+                                            val nx = cx + ddx[i]
+                                            val ny = cy + ddy[i]
+                                            if (nx in 0 until cols && ny in 0 until rows) {
+                                                val nIdx = ny * cols + nx
+                                                if (isRed[nIdx] && !visited[nIdx]) {
+                                                    visited[nIdx] = true
+                                                    q[qTail++] = nx
+                                                    q[qTail++] = ny
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Filter out tiny artifacts (leaves) and loosely connected pixel scattering
+                                    if (count > 25) {
+                                        val w = maxX - minX + 1
+                                        val h = maxY - minY + 1
+                                        val ratio = w.toFloat() / h.toFloat()
+                                        val fillRatio = count.toFloat() / (w * h)
+                                        
+                                        // Require larger solid blobs to avoid noise, ratio closer to square (circle bounds)
+                                        if (ratio in 0.6f..1.6f && w in 8..(cols/3) && h in 8..(rows/3) && fillRatio > 0.25f) {
+                                            val rectMinX = (minX * step).toFloat()
+                                            val rectMinY = (minY * step).toFloat()
+                                            val rectMaxX = (maxX * step + step).toFloat()
+                                            val rectMaxY = (maxY * step + step).toFloat()
+                                            
+                                            // Ensure it's in the upper section (above headlights/taillights)
+                                            if (rectMaxY < bh * 0.7f) {
+                                                val pad = 10f
+                                                val rect = RectF(rectMinX - pad, rectMinY - pad, rectMaxX + pad, rectMaxY + pad)
+                                                drivingAlerts.add("PROHIBITIVE SIGN DETECTED")
+                                                overlays.add(OverlayElement.Box(rect, "RESTRICTION SIGN", Color.Red, isCritical = true, pulse = true))
+                                                isCriticalSession = true
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("Vision", "Red Blob detect error", e)
+                    }
+                }
+                
+                detections.forEach { detection ->
+                    val label = detection.categories().firstOrNull()?.categoryName()?.lowercase() ?: ""
+                    val box = detection.boundingBox()
+                    val occupancy = (box.width() * box.height()) / (frameWidth * frameHeight).toFloat()
+                    
+                    if (label == "stop sign" && occupancy > 0.01f) {
+                        drivingAlerts.add("STOP SIGN AHEAD")
+                        overlays.add(OverlayElement.Box(box, "STOP", Color.Red, isCritical = true, pulse = true))
+                        isCriticalSession = true
+                    } else if (label == "traffic light") {
+                        drivingAlerts.add("TRAFFIC LIGHT")
+                        overlays.add(OverlayElement.Box(box, "TRAFFIC LIGHT", Color.Yellow))
+                    } else if (label in listOf("person", "bicycle", "motorcycle") && occupancy > 0.05f) {
+                        drivingAlerts.add("CAUTION: ${label.uppercase()}")
+                        overlays.add(OverlayElement.Box(box, label.uppercase(), Color.Red, pulse = true))
+                        isCriticalSession = true
+                    } else if (label in listOf("car", "truck", "bus") && occupancy > 0.35f) {
+                        drivingAlerts.add("VEHICLE PROXIMITY ALERT")
+                        overlays.add(OverlayElement.Box(box, "TOO CLOSE", Color.Red, isCritical = true, pulse = true))
+                        isCriticalSession = true
+                    } else if (label in listOf("car", "truck", "bus") && occupancy > 0.05f) {
+                        overlays.add(OverlayElement.Box(box, label.uppercase(), Color.Green))
+                    } else if (occupancy > 0.1f && label !in listOf("airplane", "bird", "kite")) {
+                         overlays.add(OverlayElement.Box(box, label.uppercase(), Color.Cyan))
+                    }
+                }
+                
+                recognizedTexts.forEach { (text, rect) ->
+                    val upperText = text.uppercase().replace("\n", " ")
+                    if (upperText.contains("SPEED") || upperText.matches(Regex(".*\\b(MAX|LIMIT)\\b.*"))) {
+                        drivingAlerts.add("SPEED LIMIT DETECTED")
+                        overlays.add(OverlayElement.Box(rect, "SPEED: $upperText", Color.Yellow, pulse = true))
+                        isCriticalSession = true
+                    } else if (upperText.contains("PARK") && (upperText.contains("NO") || upperText.contains("CAN'T") || upperText.contains("CANT") || upperText.contains("NOT"))) {
+                        drivingAlerts.add("CANT PARKING ZONE")
+                        overlays.add(OverlayElement.Box(rect, "NO PARKING", Color.Red, isCritical = true, pulse = true))
+                        isCriticalSession = true
+                    } else if (upperText.contains("TURN") && (upperText.contains("NO") || upperText.contains("CANT"))) {
+                        drivingAlerts.add("RESTRICTED LANE OR TURN")
+                        overlays.add(OverlayElement.Box(rect, "RESTRICTED", Color.Red, pulse = true))
+                    } else if (upperText.contains("STOP")) {
+                        drivingAlerts.add("STOP SIGN AHEAD")
+                        overlays.add(OverlayElement.Box(rect, "STOP", Color.Red, isCritical = true, pulse = true))
+                        isCriticalSession = true
+                    }
+                }
+                
+                if (drivingAlerts.isNotEmpty()) {
+                    alerts.addAll(drivingAlerts)
+                } else {
+                    alerts.add("DRIVE SAFELY")
                 }
             }
 
@@ -287,6 +480,7 @@ class VisualAssistantEngine {
         val cmd = command.lowercase()
         return when {
             cmd.contains("park") -> Mode.PARKING_ASSISTANT
+            cmd.contains("drive") || cmd.contains("traffic") || cmd.contains("sign") -> Mode.DRIVING_ASSISTANT
             cmd.contains("warn") || cmd.contains("risk") || cmd.contains("danger") || cmd.contains("safe") -> Mode.SAFETY_WATCH
             cmd.contains("describe") || cmd.contains("what") -> Mode.ENVIRONMENT_QUERY
             else -> Mode.GENERAL
